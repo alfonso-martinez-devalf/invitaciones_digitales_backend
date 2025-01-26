@@ -1,17 +1,31 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, HttpException, Version } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
-import { CreateNotificationDto } from './dto/create-notification.dto';
+import { SubscribeToTopic } from './dto/subscribe-to-topic.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
 
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notificationsService: NotificationsService) { }
 
+
+  @Post('/subscribe-to-topic')
+  @Version('1')
+  subscribeToTopic(@Body() subscribeToTopic: SubscribeToTopic) {
+    try {
+      return this.notificationsService.subscribeToTopic(subscribeToTopic);
+    } catch (error) {
+      throw new HttpException(error.message, 500);
+    }
+  }
   
-  // @Post()
-  // create(@Body() createNotificationDto: CreateNotificationDto) {
-  //   return this.notificationsService.subscribeToTopic(createNotificationDto);
-  // }
+  @Post('/unsubscribe-to-topic')
+  unsubscribeToTopic(@Body() unsubscribeToTopic: SubscribeToTopic) {
+    try {
+      return this.notificationsService.unsubscribeToTopic(unsubscribeToTopic);
+    } catch (error) {
+      throw new HttpException(error.message, 500);
+    }
+  }
 
   // @Get()
   // findAll() {

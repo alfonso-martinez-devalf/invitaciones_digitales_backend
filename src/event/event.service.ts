@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { EventIdInfoDto } from './dto/event-id-info.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { NotificationsService } from 'src/notifications/notifications.service';
 const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
 
 enum EventType {
@@ -20,7 +21,11 @@ interface Event {
 interface Invitation {
   id: string;
   name: string;
+  shortName: string;
   hasConfirmedAttendance: boolean;
+  invitedBy?: string;
+  hasAttendanceBeenNotified?: boolean;
+  hasUnAttendanceBeenNotified?: boolean;
 }
 
 interface EventSettings {
@@ -31,6 +36,8 @@ interface EventSettings {
 
 @Injectable()
 export class EventService implements OnApplicationBootstrap {
+  constructor(private notificationsService: NotificationsService) { }
+
   activeEvents: Event[] = [];
   activeEventsIds: string[] = [];
   activeEventsListener: Function;
@@ -61,13 +68,43 @@ export class EventService implements OnApplicationBootstrap {
 
         //* Creating specific events listeners
         for (const eventId of this.activeEventsIds) {
-          console.log(eventId);
           const query = db.collection(EventType.NUESTRA_BODA).doc(eventId).collection('invitations');
 
-          const observer = query.onSnapshot((querySnapshot: FirebaseFirestore.QuerySnapshot) => {
-            querySnapshot.docChanges().forEach(async change => {
-              //? Getting invitation properties.
-              const { id, hasConfirmedAttendance, name, familySurnames, invitedBy, companion } = change.doc.data();
+          const observer = query.onSnapshot(async (querySnapshot: FirebaseFirestore.QuerySnapshot) => {
+            //? Checking if event already exists in runtime registry in order to compare with the arriving changes.
+            console.log(`1 Active Events: ${JSON.stringify(this.activeEvents)}`);
+            let eventIndex: number = this.activeEvents.findIndex((item: Event) => item.id == eventId);
+
+            if (eventIndex == -1) {
+              //? If event DOES NOT exist
+              const dbEventBackup = await db.collection(EventType.NUESTRA_BODA).doc('notifications-control').collection(eventId).doc('control-list').get();
+
+              let event: Event = {
+                id: eventId,
+                eventType: EventType.NUESTRA_BODA,
+                invitations: []
+              };
+
+              if (dbEventBackup.exists) {
+                const { list } = dbEventBackup.data();
+                const invitations: Invitation[] = list != undefined ? list.map((item) => item as Invitation) : [];
+                event.invitations = invitations;
+              }
+
+              this.activeEvents.push(event);
+
+            }
+
+            querySnapshot.docChanges().forEach(async (change) => {
+              eventIndex = this.activeEvents.findIndex((item) => item.id == eventId);
+              let event: Event = this.activeEvents.find((item) => item.id == eventId);
+
+              let { invitations } = event;
+              let invitationsToAdd: Invitation[] = [];
+              let invitationsToNotify: Invitation[] = [];
+
+              //? Getting invitation / user properties.
+              let { id, hasConfirmedAttendance, name, familySurnames, shortName, companion, invitedBy } = change.doc.data();
 
               const hostFamilySurnames: string = familySurnames;
 
@@ -75,125 +112,242 @@ export class EventService implements OnApplicationBootstrap {
                 id,
                 hasConfirmedAttendance,
                 name,
+                shortName,
+                invitedBy,
               };
 
-              //? Checking if event already exists in runtime registry in order to compare with the arriving changes.
-              const eventExists: boolean = this.activeEvents.some((item) => item.id == eventId);
+              if (change.type === 'added') {
 
-              if (!eventExists) {
-                //? If event DOES NOT exist
-                let event: Event = {
-                  id: eventId,
-                  eventType: EventType.NUESTRA_BODA,
-                  invitations: []
-                };
+                //TODO: Get the backup invitation instance and update the hasAttendanceBeenNotified
+                const invitationExistsInRuntime: boolean = invitations.some((inv: Invitation) => inv.id == newInvitation.id);
 
-                if (change.type === 'added' || change.type === 'modified') {
-                  console.log('New invitation: ', change.doc.data());
-
-                  const invitationsToAdd: Invitation[] = [];
-
+                if (!invitationExistsInRuntime) {
                   //? Adding main invitator to the invitations to assign to the event
                   invitationsToAdd.push(newInvitation);
-
-                  //? Adding companion to the invitations to assign to the event
-                  for (const person of companion) {
-                    const { id, hasConfirmedAttendance, name, familySurnames, invitedBy, companion } = person;
-
-                    const invitation: Invitation = {
-                      id,
-                      hasConfirmedAttendance,
-                      name,
-                    };
-
-                    invitationsToAdd.push(invitation);
-                  }
-
-                  event.invitations = invitationsToAdd;
-
-                  this.activeEvents.push(event);
                 }
-              } else {
-                //? Event exists in our runtime registry.
-                let event: Event = this.activeEvents.find((item) => item.id == eventId);
-                const invitationsToNotify: Invitation[] = [];
 
-                if (change.type === 'added') {
-                  const invitationsToAdd: Invitation[] = [];
+                //? Should we notify?
+                if (hasConfirmedAttendance) {
+                  if (!invitationExistsInRuntime) {
+                    invitationsToNotify.push(newInvitation);
+                  } else {
+                    const existingInvitation: Invitation = invitations.find((inv: Invitation) => inv.id == newInvitation.id);
+                    if (!existingInvitation.hasAttendanceBeenNotified) {
+                      invitationsToNotify.push(newInvitation);
+                    }
+                  }
+                }
 
-                  //? Adding main invitator to the invitations to assign to the event
-                  invitationsToAdd.push(newInvitation);
-                  if (newInvitation.hasConfirmedAttendance) invitationsToNotify.push(newInvitation);
+                //? Adding companion to the invitations to assign to the event
+                for (const person of companion) {
+                  const { id, hasConfirmedAttendance, name, invitedBy, shortName } = person;
 
-                  //? Adding companion to the invitations to assign to the event
+                  const invitation: Invitation = {
+                    id,
+                    hasConfirmedAttendance,
+                    name,
+                    shortName,
+                    invitedBy
+                  };
+
+                  const invitationExistsInRuntime: boolean = invitations.some((inv: Invitation) => inv.id == invitation.id);
+
+                  if (!invitationExistsInRuntime) {
+                    //? Adding main invitator to the invitations to assign to the event
+                    invitationsToAdd.push(invitation);
+                  }
+
+                  //? Should we notify?
+                  if (hasConfirmedAttendance) {
+                    if (!invitationExistsInRuntime) {
+                      invitationsToNotify.push(invitation);
+                    } else {
+                      const existingInvitation: Invitation = invitations.find((inv: Invitation) => inv.id == invitation.id);
+                      if (!existingInvitation.hasAttendanceBeenNotified) {
+                        invitationsToNotify.push(invitation);
+                      }
+                    }
+                  }
+                }
+
+                console.log(JSON.stringify(invitationsToAdd));
+
+                this.activeEvents[eventIndex].invitations.push(...invitationsToAdd);
+              }
+
+              if (change.type == 'modified') {
+                // console.log('Modified invitation: ', change.doc.data());
+                const invitationExistsInRuntime: boolean = invitations.some((inv: Invitation) => inv.id == newInvitation.id);
+
+                if (invitationExistsInRuntime) {
+                  //? Let's look for the invitation
+                  const index: number = invitations.findIndex((invitation: Invitation) => invitation.id == newInvitation.id);
+
+                  //? If invitation is found, we update it.
+                  const prevInvitation: Invitation = invitations.at(index);
+
+                  if (
+                    !prevInvitation.hasConfirmedAttendance &&
+                    newInvitation.hasConfirmedAttendance &&
+                    !prevInvitation.hasAttendanceBeenNotified
+                  ) {
+                    invitationsToNotify.push(newInvitation)
+                  };
+
+                  this.activeEvents[eventIndex].invitations[index] = newInvitation;
+
                   for (const person of companion) {
-                    const { id, hasConfirmedAttendance, name, familySurnames, invitedBy, companion } = person;
+                    const { id, hasConfirmedAttendance, name, invitedBy, shortName } = person;
 
                     const invitation: Invitation = {
                       id,
                       hasConfirmedAttendance,
                       name,
+                      shortName,
+                      invitedBy,
                     };
 
-                    invitationsToAdd.push(invitation);
-                    if (hasConfirmedAttendance) invitationsToNotify.push(invitation);
-                  }
+                    const invitationExistsInRuntime: boolean = invitations.some((inv: Invitation) => inv.id == invitation.id);
 
-                  event.invitations.concat(invitationsToAdd);
-                } else if (change.type == 'modified') {
-                  //? Let's look for the invitation
-                  const index: number = event.invitations.findIndex((invitation) => invitation.id == newInvitation.id);
+                    if (!invitationExistsInRuntime) {
+                      //? Adding main invitator to the invitations to assign to the event
+                      invitationsToAdd.push(invitation);
 
-                  if (index > 0) {
-                    //? If invitation is found, we update it.
-                    const prevInvitation: Invitation = event.invitations.at(index);
+                      //? Should we notify?
+                      if (hasConfirmedAttendance) {
+                        invitationsToNotify.push(invitation);
+                      }
 
-                    if (
-                      !prevInvitation.hasConfirmedAttendance &&
-                      newInvitation.hasConfirmedAttendance
-                    ) {
-                      invitationsToNotify.push(newInvitation)
-                    };
-                    event.invitations[index] = newInvitation;
-                  } else {
-                    //? If the invitation was not in our runtime registry, we add it.
-                    const invitationsToAdd: Invitation[] = [];
+                    } else {
+                      //? Let's look for the invitation
+                      const index: number = invitations.findIndex((inv: Invitation) => inv.id == invitation.id);
 
-                    //? Adding main invitator to the invitations to assign to the event
-                    invitationsToAdd.push(newInvitation);
-                    if (newInvitation.hasConfirmedAttendance) invitationsToNotify.push(newInvitation);
+                      //? If invitation is found, we update it.
+                      const prevInvitation: Invitation = invitations.at(index);
 
-                    //? Adding companion to the invitations to assign to the event
-                    for (const person of companion) {
-                      const { id, hasConfirmedAttendance, name, familySurnames, invitedBy, companion } = person;
-
-                      const invitation: Invitation = {
-                        id,
-                        hasConfirmedAttendance,
-                        name,
+                      if (
+                        !prevInvitation.hasConfirmedAttendance &&
+                        invitation.hasConfirmedAttendance &&
+                        !prevInvitation.hasAttendanceBeenNotified
+                      ) {
+                        invitationsToNotify.push(invitation)
                       };
 
+                      this.activeEvents[eventIndex].invitations[index] = invitation;
+                    }
+                  }
+
+                } else {
+                  //? If the invitation was not in our runtime registry, we add it.
+
+                  //? Adding main invitator to the invitations to assign to the event
+                  invitationsToAdd.push(newInvitation);
+
+                  //? Should we notify?
+                  if (hasConfirmedAttendance) {
+                    invitationsToNotify.push(newInvitation);
+                  }
+
+                  //? Adding companion to the invitations to assign to the event
+                  for (const person of companion) {
+                    const { id, hasConfirmedAttendance, name, invitedBy, shortName } = person;
+
+                    const invitation: Invitation = {
+                      id,
+                      hasConfirmedAttendance,
+                      name,
+                      shortName,
+                      invitedBy
+                    };
+
+                    const invitationExistsInRuntime: boolean = invitations.some((inv) => inv.id == invitation.id);
+
+                    if (!invitationExistsInRuntime) {
+                      //? Adding main invitator to the invitations to assign to the event
                       invitationsToAdd.push(invitation);
-                      if (hasConfirmedAttendance) invitationsToNotify.push(invitation);
+                    }
+
+                    //? Should we notify?
+                    if (hasConfirmedAttendance) {
+                      if (!invitationExistsInRuntime) {
+                        invitationsToNotify.push(invitation);
+                      } else {
+                        const existingInvitation: Invitation = invitations.find((inv: Invitation) => inv.id == invitation.id);
+                        if (!existingInvitation.hasAttendanceBeenNotified) {
+                          invitationsToNotify.push(invitation);
+                        }
+                      }
                     }
                   }
                 }
 
-                //? Checking if we should notify.
-                if (invitationsToNotify.length) {
-                  const eventSettings = await db.collection(EventType.NUESTRA_BODA).doc(eventId).get();
-                  if (!eventSettings.exists) {
-                    console.error(`Event: ${eventId} not found. Trying to retrieve organizers notification tokens.`);
-                  } else {
-                    const { organizerContacts } = eventSettings.data();
-                    for (const organizer of organizerContacts) {
-                      //TODO: Implement Notification
-                      const { phone } = organizer;
-                      console.log(phone);
-                    }
-                  }
-                }
+                this.activeEvents[eventIndex].invitations.push(...invitationsToAdd);
               }
+
+              //? Checking if we should notify.
+              if (invitationsToNotify.length) {
+                console.log("Sending notification");
+                const topic = `${EventType.NUESTRA_BODA}-${eventId}-invitations`;
+                let title = invitationsToNotify.length > 1 ? 'Nuevos invitados' : 'Nuevo invitado';
+                if (familySurnames) {
+                  title = `${title} - Fam. ${familySurnames}`;
+                }
+                const body = invitationsToNotify.map((invitation) => invitation.shortName).join(', ');
+
+                console.log(`Topic: ${topic}, Title: ${title}, Body: ${body}`);
+
+                await this.notificationsService.sendPushToTopic(topic, title, body);
+
+                let { invitations } = event;
+
+                for (let invitation of invitationsToNotify) {
+                  //? Let's look for the invitation
+                  const index: number = invitations.findIndex((inv) => inv.id == invitation.id);
+                  invitation.hasAttendanceBeenNotified = true;
+                  this.activeEvents[eventIndex].invitations[index] = invitation;
+                }
+                // const eventSettings = await db.collection(EventType.NUESTRA_BODA).doc(eventId).get();
+                // if (!eventSettings.exists) {
+                //   console.error(`Event: ${eventId} not found. Trying to retrieve organizers notification tokens.`);
+                // } else {
+                //   const { organizerContacts } = eventSettings.data();
+                //   for (const organizer of organizerContacts) {
+                //     const { phone } = organizer;
+                //     console.log(phone);
+                //   }
+                // }
+              }
+
+              invitationsToNotify = [];
+              invitationsToAdd = [];
+
+              //TODO:
+              /*Implement a cron job to update it based on last modification date and last update backup date. 
+              if last modification date is greater by 5 minutes than last update backup date, then update the backup.
+              */
+              //? Updating dbEventBackup
+              const eventInvitationsArray = [];
+              for (const invitation of this.activeEvents[eventIndex].invitations) {
+                eventInvitationsArray.push({
+                  id: invitation.id,
+                  hasConfirmedAttendance: invitation.hasConfirmedAttendance ?? false,
+                  name: invitation.name,
+                  shortName: invitation.shortName,
+                  invitedBy: invitation.invitedBy,
+                  hasAttendanceBeenNotified: invitation.hasAttendanceBeenNotified ?? false,
+                  hasUnAttendanceBeenNotified: invitation.hasUnAttendanceBeenNotified ?? false
+                });
+              }
+
+              await db.collection(EventType.NUESTRA_BODA).doc('notifications-control').collection(eventId).doc('control-list').update({
+                list: eventInvitationsArray
+              })
+                .then(() => {
+                  console.log("Backup updated");
+                })
+                .catch((error) => {
+                  console.error(error);
+                });
             });
           });
 

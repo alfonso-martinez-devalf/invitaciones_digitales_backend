@@ -1,16 +1,14 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import * as firebase from 'firebase-admin';
+import { SubscribeToTopic } from './dto/subscribe-to-topic.dto';
 
 @Injectable()
 export class NotificationsService {
-    PushNotificationTypes = {
-        CustomerAddedSale: 'CustomerAddedSale',
-        CustomerUpdatedSale: 'CustomerUpdatedSale',
-    };
-
-    async subscribeToTopic(tokens: [string], topic: string) {
+    async subscribeToTopic(subscribeToTopic: SubscribeToTopic) {
+        const topic = `${subscribeToTopic.event_type}-${subscribeToTopic.event_id}-${subscribeToTopic.topic}`;
         try {
-            await firebase.messaging().subscribeToTopic(tokens, topic);
+            await firebase.messaging().subscribeToTopic(subscribeToTopic.token, topic);
+            return { message: `Subscribed to topic: ${topic}` };
         } catch (error) {
             console.error(error);
             throw new HttpException(error.message, HttpStatus.CONFLICT, {
@@ -19,10 +17,10 @@ export class NotificationsService {
         }
     }
 
-    //! This is not currently used.
-    async unsubscribeToTopic(tokens: [string], topic: string) {
+    async unsubscribeToTopic(unsubscribeToTopic: SubscribeToTopic) {
+        const topic = `${unsubscribeToTopic.event_type}-${unsubscribeToTopic.event_id}-${unsubscribeToTopic.topic}`;
         try {
-            await firebase.messaging().unsubscribeFromTopic(tokens, topic);
+            await firebase.messaging().unsubscribeFromTopic(unsubscribeToTopic.token, topic);
         } catch (error) {
             console.error(error);
             throw new HttpException(error.message, HttpStatus.CONFLICT, {
@@ -31,11 +29,11 @@ export class NotificationsService {
         }
     }
 
-    sendPushToToken = async (
+    async sendPushToToken(
         notification_token: any,
         title: string,
         body: string,
-    ): Promise<void> => {
+    ): Promise<void> {
         try {
             await firebase
                 .messaging()
@@ -51,6 +49,8 @@ export class NotificationsService {
             return error;
         }
     };
+
+    //? SendMultiCast to several tokens
 
     async sendPushToTopic(
         topic: string,
