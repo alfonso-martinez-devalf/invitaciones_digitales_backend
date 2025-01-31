@@ -3,6 +3,7 @@ import { EventIdInfoDto } from './dto/event-id-info.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { NotificationsService } from 'src/notifications/notifications.service';
 const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 enum EventType {
   NUESTRA_BODA = 'nuestraboda',
@@ -51,6 +52,72 @@ export class EventService implements OnApplicationBootstrap {
     }
   }
 
+  @Cron(CronExpression.EVERY_HOUR)
+  async handleCron() {
+    const db = getFirestore();
+    const now = new Date();
+
+    console.log(`Reminders cron job running at ${now}`);
+    for (const event of this.activeEvents) {
+      const eventSettingsRef = db.collection(event.eventType).doc(event.id);
+      const eventSettingsDoc = await eventSettingsRef.get();
+
+      console.log(`Event: ${event.id}`);
+      if (eventSettingsDoc.exists) {
+        const { ceremonyDate, partyDate } = eventSettingsDoc.data();
+        const eventDate: Date = ceremonyDate ? ceremonyDate.toDate() : partyDate.toDate();
+
+        const timeDiff = eventDate.getTime() - now.getTime();
+        const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
+
+        if ([8, 1].includes(daysDiff) || [6, 1].includes(Math.ceil(timeDiff / (1000 * 3600)))) {
+          const topic = `${event.eventType}-${event.id}-reminders`;
+          const title = `Recordatorio de ${event.eventType}`;
+          const body = `El evento se celebrará el ${eventDate.toLocaleString()}. ¡No faltes!.`;
+
+          const dbEventNotificationControlRef = db.collection(event.eventType).doc('notifications-control').collection(event.id).doc('control-list');
+          const dbEventNotificationControlDoc = await dbEventNotificationControlRef.get();
+          const dbEventNotificationControl = dbEventNotificationControlDoc.data();
+
+          const eightDayReminderSent = dbEventNotificationControl.eightDayReminderSent || false;
+          const oneDayReminderSent = dbEventNotificationControl.oneDayReminderSent || false;
+          const sixHourReminderSent = dbEventNotificationControl.sixHourReminderSent || false;
+          const oneHourReminderSent = dbEventNotificationControl.oneHourReminderSent || false;
+
+          let shouldSendReminder = false;
+          let message = ''
+
+          if (daysDiff === 8 && !eightDayReminderSent) {
+            await dbEventNotificationControlRef.update({ eightDayReminderSent: true });
+            shouldSendReminder = true;
+            message = '¡Faltan 8 días para el evento! Prepara tu mejor atuendo.'
+          } else if (daysDiff === 1 && !oneDayReminderSent) {
+            await dbEventNotificationControlRef.update({ oneDayReminderSent: true });
+            shouldSendReminder = true;
+            message = '¡Mañana es el evento! No te lo puedes perder. Te esperamos con gusto';
+          } else if (Math.ceil(timeDiff / (1000 * 3600)) === 6 && !sixHourReminderSent) {
+            const eventHour = eventDate.getHours();
+            if (eventHour < 13) {
+              console.log(`Skipping reminder for event: ${event.id} as it would be sent before 7am`);
+              continue;
+            }
+            await dbEventNotificationControlRef.update({ sixHourReminderSent: true });
+            shouldSendReminder = true;
+            message = '¡Mañana es el evento! No te lo puedes perder. Te esperamos con gusto';
+          } else if (Math.ceil(timeDiff / (1000 * 3600)) === 1 && !oneHourReminderSent) {
+            await dbEventNotificationControlRef.update({ oneHourReminderSent: true });
+            shouldSendReminder = true;
+          }
+
+          if (shouldSendReminder) {
+            console.log(`Sending reminder for event: ${event.id}`);
+            await this.notificationsService.sendPushToTopic(topic, title, body);
+          }
+        }
+      }
+    }
+  }
+
   async listenWeddingActiveEvents() {
     try {
       const db = getFirestore();
@@ -66,18 +133,21 @@ export class EventService implements OnApplicationBootstrap {
         const { active } = docSnapshot.data();
         this.activeEventsIds = active;
 
-        //* Creating specific events listeners
+        //!
+        //! Creating specific events listeners
+        //!
+
         for (const eventId of this.activeEventsIds) {
           const query = db.collection(EventType.NUESTRA_BODA).doc(eventId).collection('invitations');
 
           const observer = query.onSnapshot(async (querySnapshot: FirebaseFirestore.QuerySnapshot) => {
             //? Checking if event already exists in runtime registry in order to compare with the arriving changes.
-            console.log(`1 Active Events: ${JSON.stringify(this.activeEvents)}`);
+            console.log(`Active Events: ${JSON.stringify(this.activeEvents)}`);
             let eventIndex: number = this.activeEvents.findIndex((item: Event) => item.id == eventId);
 
             if (eventIndex == -1) {
               //? If event DOES NOT exist
-              const dbEventBackup = await db.collection(EventType.NUESTRA_BODA).doc('notifications-control').collection(eventId).doc('control-list').get();
+              const dbEventNotificationControl = await db.collection(EventType.NUESTRA_BODA).doc('notifications-control').collection(eventId).doc('control-list').get();
 
               let event: Event = {
                 id: eventId,
@@ -85,14 +155,13 @@ export class EventService implements OnApplicationBootstrap {
                 invitations: []
               };
 
-              if (dbEventBackup.exists) {
-                const { list } = dbEventBackup.data();
+              if (dbEventNotificationControl.exists) {
+                const { list } = dbEventNotificationControl.data();
                 const invitations: Invitation[] = list != undefined ? list.map((item) => item as Invitation) : [];
                 event.invitations = invitations;
               }
 
               this.activeEvents.push(event);
-
             }
 
             querySnapshot.docChanges().forEach(async (change) => {

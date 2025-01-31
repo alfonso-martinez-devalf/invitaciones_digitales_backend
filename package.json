@@ -25,7 +25,9 @@
     "@nestjs/core": "^10.0.0",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/schedule": "^5.0.1",
     "firebase-admin": "^13.0.1",
+    "nestjs": "^0.0.1",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1"
   },
