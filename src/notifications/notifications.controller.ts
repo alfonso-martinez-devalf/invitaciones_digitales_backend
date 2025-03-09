@@ -19,6 +19,7 @@ export class NotificationsController {
   }
   
   @Post('/unsubscribe-to-topic')
+  @Version('1')
   unsubscribeToTopic(@Body() unsubscribeToTopic: SubscribeToTopic) {
     try {
       return this.notificationsService.unsubscribeToTopic(unsubscribeToTopic);

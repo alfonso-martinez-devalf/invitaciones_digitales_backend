@@ -10,6 +10,7 @@ export class NotificationsService {
             await firebase.messaging().subscribeToTopic(subscribeToTopic.token, topic);
             return { message: `Subscribed to topic: ${topic}` };
         } catch (error) {
+            console.error(`${subscribeToTopic.event_type}-${subscribeToTopic.event_id}-${subscribeToTopic.topic}`);
             console.error(error);
             throw new HttpException(error.message, HttpStatus.CONFLICT, {
                 cause: new Error(error.message),
@@ -22,6 +23,7 @@ export class NotificationsService {
         try {
             await firebase.messaging().unsubscribeFromTopic(unsubscribeToTopic.token, topic);
         } catch (error) {
+            console.error(`${unsubscribeToTopic.event_type}-${unsubscribeToTopic.event_id}-${unsubscribeToTopic.topic}`);
             console.error(error);
             throw new HttpException(error.message, HttpStatus.CONFLICT, {
                 cause: new Error(error.message),
@@ -56,6 +58,7 @@ export class NotificationsService {
         topic: string,
         title: string,
         body: string,
+        data?: {}
     ): Promise<void> {
         try {
             await firebase
@@ -63,6 +66,7 @@ export class NotificationsService {
                 .send({
                     topic: topic,
                     notification: { title, body },
+                    data
                 })
                 .catch((error: any) => {
                     console.error(error);
