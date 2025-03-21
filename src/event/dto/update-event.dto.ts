@@ -3,6 +3,7 @@ import { EventIdInfoDto } from './event-id-info.dto';
 
 export class UpdateEventDto extends PartialType(EventIdInfoDto) {
     appImages: [AppImages];
+    mainNames: string;
     ceremonyAddress: string;
     ceremonyDate: Date;
     galleryItems: [AppImages];

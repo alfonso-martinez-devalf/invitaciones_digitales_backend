@@ -8,6 +8,9 @@ export class Event extends Document {
 
     @Prop()
     ceremonyAddress: string;
+    
+    @Prop()
+    mainNames: string;
 
     @Prop({ type: Date })
     ceremonyDate: Date;
