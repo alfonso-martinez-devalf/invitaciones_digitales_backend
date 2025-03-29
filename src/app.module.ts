@@ -9,12 +9,14 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AiModule } from './ai/ai.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AttendantModule } from './attendant/attendant.module';
+import { UserModule } from './user/user.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       envFilePath: [
-        '/Users/devalf/Documents/feest_project/invitaciones_digitales_backend/.feest.dev.env',
+        '/Users/devalf/Documents/invitaciones_digitales_backend/.feest.dev.env',
         '/var/www/api.devalf.com/ENV_FILES/.feest.prod.env',
       ],
       isGlobal: true,
@@ -30,7 +32,9 @@ import { MongooseModule } from '@nestjs/mongoose';
     FirebaseModule,
     EventModule,
     NotificationsModule,
-    AiModule
+    AiModule,
+    AttendantModule,
+    UserModule
   ],
   controllers: [AppController],
   providers: [AppService, NotificationsService],

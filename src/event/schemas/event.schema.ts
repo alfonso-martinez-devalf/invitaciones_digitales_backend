@@ -3,12 +3,12 @@ import { Document } from 'mongoose';
 
 @Schema()
 export class Event extends Document {
-    @Prop({type: [Object]})
+    @Prop({ type: [Object] })
     appImages;
 
     @Prop()
     ceremonyAddress: string;
-    
+
     @Prop()
     mainNames: string;
 
@@ -21,31 +21,31 @@ export class Event extends Document {
     @Prop()
     createdBy: string;
 
-    @Prop({type: [Object]})
+    @Prop({ type: [Object] })
     galleryItems;
 
     @Prop()
     generalFont: string;
 
-    @Prop({type: [Object]})
+    @Prop({ type: [Object] })
     giftsTable;
 
     @Prop()
     guests: [string];
 
-    @Prop({default: false})
+    @Prop({ default: false })
     hasCeremony: boolean;
 
-    @Prop({default: false})
+    @Prop({ default: false })
     hasGallery: boolean;
 
-    @Prop({default: false})
+    @Prop({ default: false })
     hasGiftsTable: boolean;
 
-    @Prop({default: false})
+    @Prop({ default: false })
     hasParty: boolean;
 
-    @Prop({default: false})
+    @Prop({ default: false })
     hasSong: boolean;
 
     @Prop()
@@ -60,7 +60,7 @@ export class Event extends Document {
     @Prop()
     namesFont: string;
 
-    @Prop({type: [Object]})
+    @Prop({ type: [Object] })
     organizerContacts;
 
     @Prop()

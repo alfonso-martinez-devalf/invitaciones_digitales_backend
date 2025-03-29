@@ -35,14 +35,14 @@ export interface AppImages {
 };
 
 export interface BasicContact {
-    createdAt: string;
+    createdAt: Date;
     email?: string;
     guests: [string];
     id: string;
     name: string;
     notificationTokens: [string];
     phone?: string;
-    updatedAt?: string;
+    updatedAt?: Date;
 };
 
 export interface GiftTable {
